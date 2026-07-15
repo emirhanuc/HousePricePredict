@@ -28,3 +28,21 @@ data/processed/*.csv
 # Generated preprocessing artifacts
 models/*.joblib
 results/*.txt
+
+# Generated processed datasets
+data/processed/*.csv
+!data/processed/.gitkeep
+
+# Generated model artifacts
+models/*.pkl
+models/*.joblib
+!models/.gitkeep
+
+# Generated result files
+results/*.txt
+results/*.csv
+!results/.gitkeep
+
+# Generated visualizations
+images/*.png
+!images/.gitkeep
