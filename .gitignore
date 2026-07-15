@@ -44,5 +44,5 @@ results/*.csv
 !results/.gitkeep
 
 # Generated visualizations
-images/*.png
-!images/.gitkeep
+#images/*.png
+#!images/.gitkeep

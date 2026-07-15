@@ -20,6 +20,7 @@ from time import perf_counter
 import joblib
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import (
@@ -39,6 +40,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PROCESSED_DATA_DIR = PROJECT_ROOT / "data" / "processed"
 MODELS_DIR = PROJECT_ROOT / "models"
 RESULTS_DIR = PROJECT_ROOT / "results"
+IMAGES_DIR = PROJECT_ROOT / "images"
 
 PROCESSED_TRAIN_PATH = (
     PROCESSED_DATA_DIR / "processed_train.csv"
@@ -54,6 +56,22 @@ METRICS_PATH = (
 
 VALIDATION_PREDICTIONS_PATH = (
     RESULTS_DIR / "validation_predictions.csv"
+)
+
+ACTUAL_VS_PREDICTED_PATH = (
+    IMAGES_DIR / "actual_vs_predicted.png"
+)
+
+RESIDUAL_PLOT_PATH = (
+    IMAGES_DIR / "residual_plot.png"
+)
+
+RESIDUAL_DISTRIBUTION_PATH = (
+    IMAGES_DIR / "residual_distribution.png"
+)
+
+FEATURE_COEFFICIENTS_PATH = (
+    IMAGES_DIR / "feature_coefficients.png"
 )
 
 
@@ -72,7 +90,7 @@ RANDOM_STATE = 42
 # ============================================================
 
 def create_output_directories() -> None:
-    """Create model and result directories when necessary."""
+    """Create model, result, and image directories."""
 
     MODELS_DIR.mkdir(
         parents=True,
@@ -80,6 +98,11 @@ def create_output_directories() -> None:
     )
 
     RESULTS_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    IMAGES_DIR.mkdir(
         parents=True,
         exist_ok=True
     )
@@ -504,6 +527,251 @@ def create_validation_results(
     )
 
     return validation_results
+def plot_actual_vs_predicted(
+    validation_results: pd.DataFrame
+) -> None:
+    """
+    Plot actual house prices against predicted house prices.
+
+    Predictions closer to the diagonal line represent more
+    accurate estimates.
+    """
+
+    actual_prices = validation_results["Actual_Price"]
+    predicted_prices = validation_results["Predicted_Price"]
+
+    minimum_value = min(
+        actual_prices.min(),
+        predicted_prices.min()
+    )
+
+    maximum_value = max(
+        actual_prices.max(),
+        predicted_prices.max()
+    )
+
+    plt.figure(figsize=(9, 7))
+
+    plt.scatter(
+        actual_prices,
+        predicted_prices,
+        alpha=0.65,
+        edgecolors="none"
+    )
+
+    plt.plot(
+        [minimum_value, maximum_value],
+        [minimum_value, maximum_value],
+        linestyle="--",
+        linewidth=2,
+        label="Perfect Prediction"
+    )
+
+    plt.xlabel("Actual Sale Price")
+    plt.ylabel("Predicted Sale Price")
+    plt.title("Actual vs Predicted House Prices")
+    plt.legend()
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+
+    plt.savefig(
+        ACTUAL_VS_PREDICTED_PATH,
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.close()
+
+
+def plot_residuals(
+    validation_results: pd.DataFrame
+) -> None:
+    """
+    Plot predicted logarithmic prices against residual errors.
+
+    A desirable residual plot has points randomly distributed
+    around zero without a visible systematic pattern.
+    """
+
+    predicted_log_prices = validation_results[
+        "Predicted_Log_Price"
+    ]
+
+    residuals = validation_results[
+        "Log_Residual"
+    ]
+
+    plt.figure(figsize=(9, 7))
+
+    plt.scatter(
+        predicted_log_prices,
+        residuals,
+        alpha=0.65,
+        edgecolors="none"
+    )
+
+    plt.axhline(
+        y=0,
+        linestyle="--",
+        linewidth=2,
+        label="Zero Residual"
+    )
+
+    plt.xlabel("Predicted Log Sale Price")
+    plt.ylabel("Residual")
+    plt.title("Linear Regression Residual Plot")
+    plt.legend()
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+
+    plt.savefig(
+        RESIDUAL_PLOT_PATH,
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.close()
+
+
+def plot_residual_distribution(
+    validation_results: pd.DataFrame
+) -> None:
+    """
+    Plot the distribution of logarithmic residual errors.
+    """
+
+    residuals = validation_results[
+        "Log_Residual"
+    ]
+
+    plt.figure(figsize=(9, 7))
+
+    plt.hist(
+        residuals,
+        bins=30,
+        alpha=0.8,
+        edgecolor="black"
+    )
+
+    plt.axvline(
+        x=0,
+        linestyle="--",
+        linewidth=2,
+        label="Zero Residual"
+    )
+
+    plt.xlabel("Log Residual")
+    plt.ylabel("Frequency")
+    plt.title("Distribution of Linear Regression Residuals")
+    plt.legend()
+    plt.grid(axis="y", alpha=0.25)
+    plt.tight_layout()
+
+    plt.savefig(
+        RESIDUAL_DISTRIBUTION_PATH,
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.close()
+
+
+def plot_feature_coefficients(
+    coefficient_table: pd.DataFrame,
+    top_n: int = 20
+) -> None:
+    """
+    Plot the model features having the largest absolute
+    Linear Regression coefficients.
+
+    Coefficient size should not automatically be interpreted as
+    causal importance, especially when correlated features exist.
+    """
+
+    top_coefficients = (
+        coefficient_table
+        .head(top_n)
+        .sort_values(
+            by="Coefficient",
+            ascending=True
+        )
+    )
+
+    plt.figure(figsize=(11, 9))
+
+    plt.barh(
+        top_coefficients["Feature"],
+        top_coefficients["Coefficient"]
+    )
+
+    plt.axvline(
+        x=0,
+        linewidth=1
+    )
+
+    plt.xlabel("Linear Regression Coefficient")
+    plt.ylabel("Feature")
+    plt.title(
+        f"Top {top_n} Features by Absolute Coefficient"
+    )
+
+    plt.grid(
+        axis="x",
+        alpha=0.25
+    )
+
+    plt.tight_layout()
+
+    plt.savefig(
+        FEATURE_COEFFICIENTS_PATH,
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.close()
+
+def generate_evaluation_visualizations(
+    validation_results: pd.DataFrame,
+    coefficient_table: pd.DataFrame
+) -> None:
+    """
+    Generate and save all Linear Regression evaluation plots.
+    """
+
+    plot_actual_vs_predicted(
+        validation_results
+    )
+
+    plot_residuals(
+        validation_results
+    )
+
+    plot_residual_distribution(
+        validation_results
+    )
+
+    plot_feature_coefficients(
+        coefficient_table
+    )
+
+    print("\nEvaluation visualizations saved:")
+
+    print(
+        f"- {ACTUAL_VS_PREDICTED_PATH}"
+    )
+
+    print(
+        f"- {RESIDUAL_PLOT_PATH}"
+    )
+
+    print(
+        f"- {RESIDUAL_DISTRIBUTION_PATH}"
+    )
+
+    print(
+        f"- {FEATURE_COEFFICIENTS_PATH}"
+    )
+
 
 
 # ============================================================
@@ -709,6 +977,11 @@ def run_linear_regression_training() -> None:
     coefficient_table = create_coefficient_table(
         model,
         features.columns.tolist()
+    )
+
+    generate_evaluation_visualizations(
+        validation_results,
+        coefficient_table
     )
 
     save_model(
