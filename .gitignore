@@ -18,3 +18,13 @@ __pycache__/
 # Saved Models
 models/*.pkl
 models/*.joblib
+
+# Generated processed datasets
+data/processed/*.csv
+
+# Keep generated-data directory
+!data/processed/.gitkeep
+
+# Generated preprocessing artifacts
+models/*.joblib
+results/*.txt
