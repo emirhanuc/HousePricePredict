@@ -1,66 +1,48 @@
 """
 House Price Prediction - Data Preprocessing Pipeline
 
-This module:
-1. Loads raw train and test datasets.
-2. Removes selected outliers from the training data.
-3. Handles missing values according to feature semantics.
-4. Encodes ordinal and nominal categorical variables.
-5. Creates additional engineered features.
-6. Standardizes numerical variables.
-7. Saves processed train and test datasets.
-8. Saves the fitted preprocessing transformer.
+This module performs:
+
+1. Raw train/test data loading
+2. Training outlier removal
+3. Target transformation
+4. Semantic missing-value handling
+5. Ordinal feature encoding
+6. Feature engineering
+7. One-Hot Encoding
+8. Numerical feature scaling
+9. Processed dataset export
+10. Preprocessor artifact export
 """
 
-from pathlib import Path
-
-import joblib
 import numpy as np
 import pandas as pd
 
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
+from src.config import (
+    PREPROCESSING_SUMMARY_PATH,
+    PREPROCESSOR_PATH,
+    PROCESSED_TEST_PATH,
+    PROCESSED_TRAIN_PATH,
+    REMOVE_OUTLIERS,
+    SCALE_NUMERIC_FEATURES,
+    TEST_DATA_PATH,
+    TRAIN_DATA_PATH
+)
 
-# ============================================================
-# PROJECT PATHS
-# ============================================================
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
-PROCESSED_DATA_DIR = PROJECT_ROOT / "data" / "processed"
-MODELS_DIR = PROJECT_ROOT / "models"
-RESULTS_DIR = PROJECT_ROOT / "results"
-
-TRAIN_PATH = RAW_DATA_DIR / "train.csv"
-TEST_PATH = RAW_DATA_DIR / "test.csv"
-
-PROCESSED_TRAIN_PATH = PROCESSED_DATA_DIR / "processed_train.csv"
-PROCESSED_TEST_PATH = PROCESSED_DATA_DIR / "processed_test.csv"
-
-PREPROCESSOR_PATH = MODELS_DIR / "preprocessor.joblib"
-SUMMARY_PATH = RESULTS_DIR / "preprocessing_summary.txt"
-
-
-# ============================================================
-# SETTINGS
-# ============================================================
-
-REMOVE_OUTLIERS = True
-SCALE_NUMERIC_FEATURES = True
+from src.utils import (
+    create_output_directories,
+    get_logger,
+    load_csv,
+    save_dataframe,
+    save_joblib_artifact,
+    save_text
+)
 
 
-# ============================================================
-# DIRECTORY CREATION
-# ============================================================
-
-def create_output_directories() -> None:
-    """Create output directories when they do not exist."""
-
-    PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+logger = get_logger(__name__)
 
 
 # ============================================================
@@ -69,7 +51,7 @@ def create_output_directories() -> None:
 
 def load_raw_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Load raw training and test datasets.
+    Load and validate raw train and test datasets.
 
     Returns
     -------
@@ -80,18 +62,17 @@ def load_raw_data() -> tuple[pd.DataFrame, pd.DataFrame]:
         Test dataset without SalePrice.
     """
 
-    if not TRAIN_PATH.exists():
-        raise FileNotFoundError(
-            f"Training dataset was not found: {TRAIN_PATH}"
-        )
+    logger.info("Loading raw datasets.")
 
-    if not TEST_PATH.exists():
-        raise FileNotFoundError(
-            f"Test dataset was not found: {TEST_PATH}"
-        )
+    train = load_csv(
+        TRAIN_DATA_PATH,
+        "Raw training dataset"
+    )
 
-    train = pd.read_csv(TRAIN_PATH)
-    test = pd.read_csv(TEST_PATH)
+    test = load_csv(
+        TEST_DATA_PATH,
+        "Raw test dataset"
+    )
 
     required_train_columns = {
         "Id",
@@ -105,14 +86,20 @@ def load_raw_data() -> tuple[pd.DataFrame, pd.DataFrame]:
 
     if missing_train_columns:
         raise ValueError(
-            "Missing required train columns: "
+            "Missing required training columns: "
             f"{sorted(missing_train_columns)}"
         )
 
     if "Id" not in test.columns:
         raise ValueError(
-            "The test dataset does not contain the Id column."
+            "The raw test dataset does not contain the Id column."
         )
+
+    logger.info(
+        "Raw datasets loaded successfully: train=%s, test=%s",
+        train.shape,
+        test.shape
+    )
 
     return train, test
 
@@ -125,13 +112,16 @@ def remove_training_outliers(
     train: pd.DataFrame
 ) -> tuple[pd.DataFrame, int]:
     """
-    Remove extreme houses with unusually large living areas and
-    relatively low sale prices.
+    Remove extreme training observations.
 
-    The test dataset is never modified.
+    Houses with GrLivArea above 4000 and SalePrice below 300000
+    are treated as unusual observations.
+
+    Test data is never modified.
     """
 
     if not REMOVE_OUTLIERS:
+        logger.info("Training outlier removal is disabled.")
         return train.copy(), 0
 
     outlier_condition = (
@@ -147,6 +137,11 @@ def remove_training_outliers(
         .copy()
     )
 
+    logger.info(
+        "Removed %d training outliers.",
+        removed_count
+    )
+
     return cleaned_train, removed_count
 
 
@@ -159,10 +154,12 @@ def correct_data_types(
     test_features: pd.DataFrame
 ) -> None:
     """
-    Convert numeric-looking category codes into strings.
+    Convert numeric-looking category codes into string variables.
 
-    MSSubClass represents a building class.
-    MoSold represents the month of sale.
+    MSSubClass is a building-class code.
+    MoSold is the month of sale.
+
+    These values are categorical rather than continuous quantities.
     """
 
     categorical_numeric_columns = [
@@ -170,12 +167,53 @@ def correct_data_types(
         "MoSold"
     ]
 
-    for dataframe in [train_features, test_features]:
+    for dataframe in (train_features, test_features):
         for column in categorical_numeric_columns:
+            if column not in dataframe.columns:
+                raise KeyError(
+                    f"Required column was not found: {column}"
+                )
+
             dataframe[column] = (
                 dataframe[column]
                 .astype("string")
             )
+
+
+# ============================================================
+# COLUMN TYPE HELPERS
+# ============================================================
+
+def get_categorical_columns(
+    dataframe: pd.DataFrame
+) -> list[str]:
+    """
+    Return all non-numeric columns.
+
+    This approach avoids deprecated object-only pandas behavior.
+    """
+
+    return [
+        column
+        for column in dataframe.columns
+        if not pd.api.types.is_numeric_dtype(
+            dataframe[column]
+        )
+    ]
+
+
+def get_numeric_columns(
+    dataframe: pd.DataFrame
+) -> list[str]:
+    """Return all numerical columns."""
+
+    return [
+        column
+        for column in dataframe.columns
+        if pd.api.types.is_numeric_dtype(
+            dataframe[column]
+        )
+    ]
 
 
 # ============================================================
@@ -187,12 +225,12 @@ def fill_semantic_missing_values(
     test_features: pd.DataFrame
 ) -> None:
     """
-    Handle missing values whose absence has a real-world meaning.
+    Handle missing values where NaN represents absence.
 
-    For example:
-    - Missing GarageType means that the house has no garage.
-    - Missing BsmtQual means that the house has no basement.
-    - Missing PoolQC means that the house has no pool.
+    Examples:
+    - Missing GarageType means no garage.
+    - Missing BsmtQual means no basement.
+    - Missing PoolQC means no pool.
     """
 
     none_columns = [
@@ -227,6 +265,11 @@ def fill_semantic_missing_values(
     ]
 
     for column in none_columns:
+        if column not in train_features.columns:
+            raise KeyError(
+                f"Required categorical column was not found: {column}"
+            )
+
         train_features[column] = (
             train_features[column]
             .fillna("None")
@@ -238,6 +281,11 @@ def fill_semantic_missing_values(
         )
 
     for column in zero_columns:
+        if column not in train_features.columns:
+            raise KeyError(
+                f"Required numeric column was not found: {column}"
+            )
+
         train_features[column] = (
             train_features[column]
             .fillna(0)
@@ -254,9 +302,9 @@ def fill_lot_frontage(
     test_features: pd.DataFrame
 ) -> None:
     """
-    Fill LotFrontage using the median frontage of each neighborhood.
+    Fill LotFrontage using neighborhood-level training medians.
 
-    All statistics are learned only from the training dataset.
+    Test statistics are never used.
     """
 
     neighborhood_medians = (
@@ -265,7 +313,7 @@ def fill_lot_frontage(
         .median()
     )
 
-    global_median = (
+    global_median = float(
         train_features["LotFrontage"].median()
     )
 
@@ -290,44 +338,18 @@ def fill_lot_frontage(
     )
 
 
-def get_categorical_columns(
-    dataframe: pd.DataFrame
-) -> list[str]:
-    """
-    Return categorical columns without relying on the deprecated
-    object-only pandas selection behavior.
-    """
-
-    return [
-        column
-        for column in dataframe.columns
-        if not pd.api.types.is_numeric_dtype(
-            dataframe[column]
-        )
-    ]
-
-
-def get_numeric_columns(
-    dataframe: pd.DataFrame
-) -> list[str]:
-    """Return all numerical columns."""
-
-    return [
-        column
-        for column in dataframe.columns
-        if pd.api.types.is_numeric_dtype(
-            dataframe[column]
-        )
-    ]
-
-
 def fill_remaining_missing_values(
     train_features: pd.DataFrame,
     test_features: pd.DataFrame
 ) -> None:
     """
-    Fill remaining categorical values using train mode and
-    numerical values using train median.
+    Fill remaining missing values using training statistics.
+
+    Categorical columns:
+        Training mode.
+
+    Numerical columns:
+        Training median.
     """
 
     categorical_columns = get_categorical_columns(
@@ -340,10 +362,11 @@ def fill_remaining_missing_values(
             .mode(dropna=True)
         )
 
-        if mode_values.empty:
-            fill_value = "Unknown"
-        else:
-            fill_value = mode_values.iloc[0]
+        fill_value = (
+            "Unknown"
+            if mode_values.empty
+            else mode_values.iloc[0]
+        )
 
         train_features[column] = (
             train_features[column]
@@ -360,7 +383,7 @@ def fill_remaining_missing_values(
     )
 
     for column in numeric_columns:
-        median_value = (
+        median_value = float(
             train_features[column].median()
         )
 
@@ -383,7 +406,9 @@ def encode_ordinal_features(
     train_features: pd.DataFrame,
     test_features: pd.DataFrame
 ) -> None:
-    """Convert naturally ordered categories into numerical ranks."""
+    """
+    Convert naturally ordered categories into numeric rankings.
+    """
 
     quality_mapping = {
         "None": 0,
@@ -394,7 +419,7 @@ def encode_ordinal_features(
         "Ex": 5
     }
 
-    ordinal_mappings = {
+    ordinal_mappings: dict[str, dict[str, int]] = {
         "ExterQual": quality_mapping,
         "ExterCond": quality_mapping,
         "HeatingQC": quality_mapping,
@@ -472,6 +497,14 @@ def encode_ordinal_features(
             "Gtl": 2
         },
 
+        "Electrical": {
+            "Mix": 0,
+            "FuseP": 1,
+            "FuseF": 2,
+            "FuseA": 3,
+            "SBrkr": 4
+        },
+
         "Functional": {
             "Sal": 0,
             "Sev": 1,
@@ -481,15 +514,28 @@ def encode_ordinal_features(
             "Min2": 5,
             "Min1": 6,
             "Typ": 7
+        },
+
+        "Fence": {
+            "None": 0,
+            "MnWw": 1,
+            "GdWo": 2,
+            "MnPrv": 3,
+            "GdPrv": 4
         }
     }
 
     for column, mapping in ordinal_mappings.items():
-        for dataframe_name, dataframe in [
+        for dataframe_name, dataframe in (
             ("train", train_features),
             ("test", test_features)
-        ]:
-            original_values = set(
+        ):
+            if column not in dataframe.columns:
+                raise KeyError(
+                    f"Required ordinal column was not found: {column}"
+                )
+
+            observed_values = set(
                 dataframe[column]
                 .dropna()
                 .astype(str)
@@ -497,7 +543,7 @@ def encode_ordinal_features(
             )
 
             unknown_values = (
-                original_values - set(mapping.keys())
+                observed_values - set(mapping.keys())
             )
 
             if unknown_values:
@@ -521,7 +567,9 @@ def encode_ordinal_features(
 def create_engineered_features(
     dataframe: pd.DataFrame
 ) -> None:
-    """Create additional explanatory housing features."""
+    """
+    Create additional explanatory housing features.
+    """
 
     dataframe["TotalSF"] = (
         dataframe["TotalBsmtSF"]
@@ -588,13 +636,15 @@ def create_engineered_features(
 
 
 # ============================================================
-# SKLEARN TRANSFORMER
+# FINAL TRANSFORMER
 # ============================================================
 
 def build_preprocessor(
     train_features: pd.DataFrame
 ) -> tuple[ColumnTransformer, list[str], list[str]]:
-    """Create the ColumnTransformer used for final conversion."""
+    """
+    Create the final sklearn ColumnTransformer.
+    """
 
     categorical_columns = get_categorical_columns(
         train_features
@@ -636,14 +686,12 @@ def build_preprocessor(
     )
 
 
-# ============================================================
-# OUTPUT HELPERS
-# ============================================================
-
 def clean_feature_names(
     feature_names: np.ndarray
 ) -> list[str]:
-    """Remove sklearn transformer prefixes from feature names."""
+    """
+    Remove sklearn transformer prefixes.
+    """
 
     return [
         str(feature_name)
@@ -652,6 +700,58 @@ def clean_feature_names(
         for feature_name in feature_names
     ]
 
+
+# ============================================================
+# VALIDATION
+# ============================================================
+
+def validate_processed_outputs(
+    processed_train: pd.DataFrame,
+    processed_test: pd.DataFrame
+) -> None:
+    """
+    Validate final train and test outputs.
+    """
+
+    train_missing_count = int(
+        processed_train.isna().sum().sum()
+    )
+
+    test_missing_count = int(
+        processed_test.isna().sum().sum()
+    )
+
+    if train_missing_count != 0:
+        raise ValueError(
+            "Missing values remain in processed training data: "
+            f"{train_missing_count}"
+        )
+
+    if test_missing_count != 0:
+        raise ValueError(
+            "Missing values remain in processed test data: "
+            f"{test_missing_count}"
+        )
+
+    train_feature_count = (
+        processed_train.shape[1] - 1
+    )
+
+    test_feature_count = (
+        processed_test.shape[1] - 1
+    )
+
+    if train_feature_count != test_feature_count:
+        raise ValueError(
+            "Processed train and test feature counts do not match. "
+            f"Train={train_feature_count}, "
+            f"Test={test_feature_count}"
+        )
+
+
+# ============================================================
+# SUMMARY REPORT
+# ============================================================
 
 def save_preprocessing_summary(
     original_train_shape: tuple[int, int],
@@ -662,7 +762,9 @@ def save_preprocessing_summary(
     numeric_count: int,
     categorical_count: int
 ) -> None:
-    """Save a human-readable preprocessing report."""
+    """
+    Save a human-readable preprocessing summary.
+    """
 
     train_feature_count = (
         processed_train.shape[1] - 1
@@ -706,9 +808,9 @@ Saved preprocessing transformer:
 {PREPROCESSOR_PATH}
 """.strip()
 
-    SUMMARY_PATH.write_text(
+    save_text(
         summary,
-        encoding="utf-8"
+        PREPROCESSING_SUMMARY_PATH
     )
 
     print("\n" + summary)
@@ -719,7 +821,11 @@ Saved preprocessing transformer:
 # ============================================================
 
 def run_preprocessing() -> None:
-    """Execute the complete preprocessing pipeline."""
+    """
+    Execute the complete preprocessing pipeline.
+    """
+
+    logger.info("Preprocessing pipeline started.")
 
     create_output_directories()
 
@@ -734,17 +840,20 @@ def run_preprocessing() -> None:
         train
     )
 
-    target = np.log1p(
-        train["SalePrice"]
-    ).rename("SalePrice_log")
+    target = (
+        np.log1p(train["SalePrice"])
+        .rename("SalePrice_log")
+    )
 
     train_features = (
-        train.drop(columns=["SalePrice", "Id"])
+        train
+        .drop(columns=["SalePrice", "Id"])
         .copy()
     )
 
     test_features = (
-        test.drop(columns=["Id"])
+        test
+        .drop(columns=["Id"])
         .copy()
     )
 
@@ -781,23 +890,23 @@ def run_preprocessing() -> None:
         test_features
     )
 
-    remaining_train_missing = (
+    remaining_train_missing = int(
         train_features.isna().sum().sum()
     )
 
-    remaining_test_missing = (
+    remaining_test_missing = int(
         test_features.isna().sum().sum()
     )
 
     if remaining_train_missing != 0:
         raise ValueError(
-            "Missing values remain in train features: "
+            "Missing values remain before final train transform: "
             f"{remaining_train_missing}"
         )
 
     if remaining_test_missing != 0:
         raise ValueError(
-            "Missing values remain in test features: "
+            "Missing values remain before final test transform: "
             f"{remaining_test_missing}"
         )
 
@@ -807,12 +916,22 @@ def run_preprocessing() -> None:
         categorical_columns
     ) = build_preprocessor(train_features)
 
+    logger.info(
+        "Applying final transformation: numeric=%d, categorical=%d",
+        len(numeric_columns),
+        len(categorical_columns)
+    )
+
     processed_train_array = (
-        preprocessor.fit_transform(train_features)
+        preprocessor.fit_transform(
+            train_features
+        )
     )
 
     processed_test_array = (
-        preprocessor.transform(test_features)
+        preprocessor.transform(
+            test_features
+        )
     )
 
     feature_names = clean_feature_names(
@@ -841,48 +960,22 @@ def run_preprocessing() -> None:
         test_ids.to_numpy()
     )
 
-    train_missing_count = int(
-        processed_train.isna().sum().sum()
+    validate_processed_outputs(
+        processed_train,
+        processed_test
     )
 
-    test_missing_count = int(
-        processed_test.isna().sum().sum()
+    save_dataframe(
+        processed_train,
+        PROCESSED_TRAIN_PATH
     )
 
-    if train_missing_count != 0:
-        raise ValueError(
-            "Missing values remain in processed train data."
-        )
-
-    if test_missing_count != 0:
-        raise ValueError(
-            "Missing values remain in processed test data."
-        )
-
-    train_feature_count = (
-        processed_train.shape[1] - 1
+    save_dataframe(
+        processed_test,
+        PROCESSED_TEST_PATH
     )
 
-    test_feature_count = (
-        processed_test.shape[1] - 1
-    )
-
-    if train_feature_count != test_feature_count:
-        raise ValueError(
-            "Train and test feature counts do not match."
-        )
-
-    processed_train.to_csv(
-        PROCESSED_TRAIN_PATH,
-        index=False
-    )
-
-    processed_test.to_csv(
-        PROCESSED_TEST_PATH,
-        index=False
-    )
-
-    joblib.dump(
+    save_joblib_artifact(
         preprocessor,
         PREPROCESSOR_PATH
     )
@@ -897,7 +990,13 @@ def run_preprocessing() -> None:
         categorical_count=len(categorical_columns)
     )
 
-    print("\nPreprocessing completed successfully.")
+    logger.info(
+        "Processed datasets and transformer saved successfully."
+    )
+
+    logger.info(
+        "Preprocessing pipeline completed successfully."
+    )
 
 
 if __name__ == "__main__":
