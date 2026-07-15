@@ -67,6 +67,34 @@ VALIDATION_PREDICTIONS_PATH = (
     RESULTS_DIR / "validation_predictions.csv"
 )
 
+# ============================================================
+# RIDGE REGRESSION ARTIFACTS
+# ============================================================
+
+RIDGE_MODEL_PATH = (
+    MODELS_DIR / "ridge_regression_model.joblib"
+)
+
+RIDGE_METRICS_PATH = (
+    RESULTS_DIR / "ridge_regression_metrics.txt"
+)
+
+RIDGE_VALIDATION_PREDICTIONS_PATH = (
+    RESULTS_DIR / "ridge_validation_predictions.csv"
+)
+
+RIDGE_ACTUAL_VS_PREDICTED_PATH = (
+    IMAGES_DIR / "ridge_actual_vs_predicted.png"
+)
+
+RIDGE_RESIDUAL_PLOT_PATH = (
+    IMAGES_DIR / "ridge_residual_plot.png"
+)
+
+RIDGE_COEFFICIENTS_PATH = (
+    IMAGES_DIR / "ridge_feature_coefficients.png"
+)
+
 
 # ============================================================
 # VISUALIZATION FILES
@@ -100,6 +128,8 @@ RANDOM_STATE = 42
 
 REMOVE_OUTLIERS = True
 SCALE_NUMERIC_FEATURES = True
+
+RIDGE_ALPHA = 10.0
 
 
 # ============================================================
