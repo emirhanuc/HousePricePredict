@@ -1,0 +1,20 @@
+# Virtual Environment
+.venv/
+venv/
+
+# PyCharm
+.idea/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Environment Variables
+.env
+
+# Log Files
+*.log
+
+# Saved Models
+models/*.pkl
+models/*.joblib
